@@ -88,7 +88,7 @@ def benchmark_to_binary(data_name, meta_name, output_dir, decoder_type, **kw):
         meta_path=meta_name,
         partition_count=1,
         output_dir=output_dir,
-        decoder_type=decoder_type,
+        decoder_typee=decoder_type,
         **kw,
     ).convert()
     return time() - time_start

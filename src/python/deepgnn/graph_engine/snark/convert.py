@@ -44,31 +44,49 @@ class _NoOpWriter:
     def close(self):
         return
 
+folder = None
+suffix = None
+node_type_num = 3
+edge_type_num = 3
+decoder_type = None
+skip_node_sampler = False
+skip_edge_sampler = False
 
-def output(
-    q_in: typing.Union[mp.Queue, Connection],
-    q_out: mp.Queue,
-    folder: str,
-    suffix: int,
-    node_type_num: int,
-    edge_type_num: int,
-    decoder_type: DecoderType,
-    skip_node_sampler: bool,
-    skip_edge_sampler: bool,
-) -> None:
-    """Process graph nodes from a queue to binary files.
+count = 0
 
-    Args:
-        q_in (typing.Union[mp.Queue, Connection]): input nodes
-        q_out (mp.Queue): signal processing is done
-        folder (str): where to save binaries
-        suffix (int): file suffix in the name of binary files
-        node_type_num (int): number of node types in the graph
-        edge_type_num (int): number of edge types in the graph
-        decoder_type (DecoderType): Decoder which is used to parse the raw graph data file, Supported: json/tsv
-        skip_node_sampler(bool): skip generation of node alias tables
-        skip_edge_sampler(bool): skip generation of edge alias tables
-    """
+node_count = 0
+edge_count = 0
+node_weight = [0] * node_type_num
+node_type_count = [0] * node_type_num
+edge_weight = [0] * edge_type_num
+edge_type_count = [0] * edge_type_num
+node_writer = None
+edge_writer = None
+node_alias = None
+edge_alias = None
+
+def output(lines):
+    global folder
+    global suffix
+    global node_type_num
+    global edge_type_num
+    global decoder_type
+    global skip_node_sampler
+    global skip_edge_sampler
+
+    global count
+
+    global node_count
+    global edge_count
+    global node_weight
+    global node_type_count
+    global edge_weight
+    global edge_type_count
+    global node_writer
+    global edge_writer
+    global node_alias
+    global edge_alias
+
     import ctypes
 
     decoder: Optional[Decoder] = None
@@ -82,35 +100,10 @@ def output(
         raise ValueError("Unsupported decoder type.")
 
     assert decoder is not None
+    if True:
 
-    node_count = 0
-    edge_count = 0
-    node_weight = [0] * node_type_num
-    node_type_count = [0] * node_type_num
-    edge_weight = [0] * edge_type_num
-    edge_type_count = [0] * edge_type_num
-    node_writer = converter.NodeWriter(str(folder), suffix)
-    edge_writer = converter.EdgeWriter(str(folder), suffix)
-    node_alias: typing.Union[converter.NodeAliasWriter, _NoOpWriter] = (
-        _NoOpWriter()
-        if skip_node_sampler
-        else converter.NodeAliasWriter(str(folder), suffix, node_type_num)
-    )
-    edge_alias: typing.Union[converter.EdgeAliasWriter, _NoOpWriter] = (
-        _NoOpWriter()
-        if skip_edge_sampler
-        else converter.EdgeAliasWriter(str(folder), suffix, edge_type_num)
-    )
-    count = 0
-    while True:
-        count += 1
-        if type(q_in) == Connection:
-            lines = q_in.recv()  # type: ignore
-        else:
-            lines = q_in.get()  # type: ignore
-
-        if lines == FLAG_ALL_DONE:
-            break
+        #if lines == FLAG_ALL_DONE:
+        #     break
 
         for line in lines:
             src, dst, typ, weight, features = decoder.decode(line)
@@ -130,27 +123,6 @@ def output(
                 edge_type_count[typ] += 1
                 edge_count += 1
 
-    node_writer.close()
-    edge_writer.close()
-    node_alias.close()
-    edge_alias.close()
-    q_out.put(
-        (
-            FLAG_WORKER_FINISHED_PROCESSING,
-            {
-                "node_count": node_count,
-                "edge_count": edge_count,
-                "partition": {
-                    "id": suffix,
-                    "node_weight": node_weight,
-                    "node_type_count": node_type_count,
-                    "edge_weight": edge_weight,
-                    "edge_type_count": edge_type_count,
-                },
-            },
-        )
-    )
-
 
 class MultiWorkersConverter:
     """Distributed converter implementation."""
@@ -160,7 +132,7 @@ class MultiWorkersConverter:
         graph_path: str,
         meta_path: str,
         output_dir: str,
-        decoder_type: DecoderType = DecoderType.JSON,
+        decoder_typee: DecoderType = DecoderType.JSON,
         partition_count: int = 1,
         worker_index: int = 0,
         worker_count: int = 1,
@@ -190,6 +162,30 @@ class MultiWorkersConverter:
             skip_node_sampler(bool): skip generation of node alias tables.
             skip_edge_sampler(bool): skip generation of edge alias tables.
         """
+        global folder
+        global suffix
+        global decoder_type
+        folder = output_dir
+        suffix = "0"
+        decoder_type = decoder_typee
+
+        global node_writer
+        global edge_writer
+        global node_alias
+        global edge_alias
+        node_writer = converter.NodeWriter(str(folder), suffix)
+        edge_writer = converter.EdgeWriter(str(folder), suffix)
+        node_alias = (
+            _NoOpWriter()
+            if skip_node_sampler
+            else converter.NodeAliasWriter(str(folder), suffix, node_type_num)
+        )
+        edge_alias = (
+            _NoOpWriter()
+            if skip_edge_sampler
+            else converter.EdgeAliasWriter(str(folder), suffix, edge_type_num)
+        )
+
         self.graph_path = graph_path
         self.meta_path = meta_path
         self.worker_index = worker_index
@@ -214,7 +210,7 @@ class MultiWorkersConverter:
         if self.partition_offset + self.partition_count > partition_count:
             self.partition_count = partition_count - self.partition_offset
 
-        if self.dispatcher is None:
+        if False: #self.dispatcher is None:
             self.dispatcher = PipeDispatcher(
                 self.output_dir,
                 self.partition_count,
@@ -259,15 +255,18 @@ class MultiWorkersConverter:
                 if self.decoder_type == DecoderType.LINEAR:
                     if line[0] == "-":  # if line is node
                         if not_first:
-                            d.dispatch(lines)
+                            output(lines)#d.dispatch(lines)
                         lines = []
                         not_first = True
                     lines.append(line)
                 else:
-                    d.dispatch(line)
+                    output(line)#d.dispatch(line)
 
         if self.decoder_type == DecoderType.LINEAR and len(lines):
-            d.dispatch(lines)
+            output(lines)#d.dispatch(lines)
+
+        if True:
+            return
 
         d.join()
 
