@@ -28,6 +28,7 @@ from deepgnn.graph_engine.snark.decoders import (
     TsvDecoder,
     LinearDecoder,
 )
+import ctypes
 from deepgnn.graph_engine.snark.dispatcher import (
     PipeDispatcher,
     Dispatcher,
@@ -48,7 +49,7 @@ folder = None
 suffix = None
 node_type_num = 3
 edge_type_num = 3
-decoder_type = None
+decoder_classs = None
 skip_node_sampler = False
 skip_edge_sampler = False
 
@@ -70,7 +71,8 @@ def output(lines):
     global suffix
     global node_type_num
     global edge_type_num
-    global decoder_type
+    global decoder_classs
+    decoder_class = decoder_classs
     global skip_node_sampler
     global skip_edge_sampler
 
@@ -87,21 +89,11 @@ def output(lines):
     global node_alias
     global edge_alias
 
-    import ctypes
-
-    decoder: Optional[Decoder] = None
-    if decoder_type == DecoderType.JSON:
-        decoder = JsonDecoder()
-    elif decoder_type == DecoderType.TSV:
-        decoder = TsvDecoder()
-    elif decoder_type == DecoderType.LINEAR:
-        decoder = LinearDecoder()
-    else:
-        raise ValueError("Unsupported decoder type.")
+    assert decoder_class is not None
+    decoder = decoder_class()
 
     assert decoder is not None
     if True:
-
         #if lines == FLAG_ALL_DONE:
         #     break
 
@@ -132,7 +124,7 @@ class MultiWorkersConverter:
         graph_path: str,
         meta_path: str,
         output_dir: str,
-        decoder_typee: DecoderType = DecoderType.JSON,
+        decoder_class: Decoder = JsonDecoder,
         partition_count: int = 1,
         worker_index: int = 0,
         worker_count: int = 1,
@@ -150,7 +142,7 @@ class MultiWorkersConverter:
             graph_path: the raw graph file folder.
             meta_path: the path of the meta.json.
             output_dir: the output directory to put the generated graph binary files.
-            decoder_type: decoder type.
+            decoder_class: decoder type.
             partition_count: how many partitions will be generated.
             worker_index: the work index when running in multi worker mode.
             worker_count: how many workers will be started to convert the data.
@@ -164,10 +156,10 @@ class MultiWorkersConverter:
         """
         global folder
         global suffix
-        global decoder_type
+        global decoder_classs
         folder = output_dir
         suffix = "0"
-        decoder_type = decoder_typee
+        decoder_classs = decoder_class
 
         global node_writer
         global edge_writer
@@ -191,7 +183,7 @@ class MultiWorkersConverter:
         self.worker_index = worker_index
         self.worker_count = worker_count
         self.output_dir = output_dir
-        self.decoder_type = decoder_type
+        self.decoder_class = decoder_class
         self.record_per_step = record_per_step
         self.read_block_in_M = buffer_size
         self.buffer_queue_size = queue_size
@@ -216,7 +208,7 @@ class MultiWorkersConverter:
                 self.partition_count,
                 meta_path_local,
                 output,
-                self.decoder_type,
+                decoder_class,
                 self.partition_offset,
                 False
                 if hasattr(fsspec.implementations, "hdfs")
@@ -252,7 +244,7 @@ class MultiWorkersConverter:
         not_first = False
         for _, data in enumerate(dataset):
             for line in data:
-                if self.decoder_type == DecoderType.LINEAR:
+                if self.decoder_class == LinearDecoder:
                     if line[0] == "-":  # if line is node
                         if not_first:
                             output(lines)#d.dispatch(lines)
@@ -262,7 +254,7 @@ class MultiWorkersConverter:
                 else:
                     output(line)#d.dispatch(line)
 
-        if self.decoder_type == DecoderType.LINEAR and len(lines):
+        if self.decoder_class == LinearDecoder and len(lines):
             output(lines)#d.dispatch(lines)
 
         if True:
@@ -371,6 +363,16 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
+    # TODO str -> class
+    if args.type == DecoderType.JSON:
+        decoder_class = JsonDecoder
+    elif args.type == DecoderType.TSV:
+        decoder_class = TsvDecoder
+    elif args.type == DecoderType.LINEAR:
+        decoder_class = LinearDecoder
+    else:
+        raise ValueError("Unsupported decoder type.")
+        
     c = MultiWorkersConverter(
         graph_path=args.data,
         meta_path=args.meta,
@@ -378,7 +380,7 @@ if __name__ == "__main__":
         output_dir=args.out,
         worker_index=args.worker_index,
         worker_count=args.worker_count,
-        decoder_type=args.type,
+        decoder_class=decoder_class,
         skip_node_sampler=args.skip_node_sampler,
         skip_edge_sampler=args.skip_edge_sampler,
     )
