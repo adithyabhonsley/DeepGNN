@@ -3,11 +3,13 @@
 
 """Decoders wihch is used to decode a line of text into node object."""
 import abc
+import dataclasses
 import json
 import logging
 import csv
 from enum import Enum
 from typing import Any, Dict
+import numpy as np
 
 logger = logging.getLogger()
 
@@ -26,6 +28,10 @@ class DecoderType(Enum):
 
 class Decoder(abc.ABC):
     """Interface to convert one line of text into node object."""
+    convert_map = {  # TODO all + sparse
+        "float_feature": np.float32,
+        "uint64_feature": np.uint64,
+    }
 
     @abc.abstractmethod
     def decode(self, line: str):
@@ -62,13 +68,34 @@ class JsonDecoder(Decoder):
         """Initialize the JsonDecoder."""
         super().__init__()
 
+    def _pull_features(self, item: dict) -> list:
+        """From item, pull all value dicts {idx: value} and order the values by idx"""
+        ret_list = []  # type: ignore
+        curr = 0
+        for key, values in item.items():
+            if values is None or "feature" not in key:
+                continue
+
+            for idx, value in values.items():
+                idx = int(idx)
+                while curr <= idx:
+                    ret_list.append(None)
+                    curr += 1
+                
+                if key != "binary_feature":
+                    value = np.array(value, dtype=self.convert_map[key])
+
+                ret_list[idx] = (key, value)
+
+        return ret_list
+
     def decode(self, line: str):
         """Use json package to convert the json text line into node object."""
         data = json.loads(line)
-        yield -1, data["node_id"], data["node_type"], data["node_weight"], {}
+        yield -1, data["node_id"], data["node_type"], data["node_weight"], self._pull_features(data)
         # TODO features for both
         for edge in data["edge"]:
-            yield edge["src_id"], edge["dst_id"], edge["edge_type"], edge["weight"], {}
+            yield edge["src_id"], edge["dst_id"], edge["edge_type"], edge["weight"], self._pull_features(edge)
 
 
 class TsvDecoder(Decoder):
@@ -213,30 +240,39 @@ class LinearDecoder(Decoder):
     def __init__(self):
         """Initialize the Decoder."""
         super().__init__()
-        self.convert_map = {  # TODO all + sparse
-            "float_feature": float,
-            "uint64_feature": int,
-        }
 
-    def decode(self, lines: str):
+    def decode(self, line: str):
         """Use json package to convert the json text line into node object."""
-        for line in lines:
-            src, dst, typ, weight, *feature_data = line.split()
+        #for line in lines:
+        data = line.split()
+
+        idx = 0
+        while True:
+            try:
+                src, dst, typ, weight = data[idx:idx+4]
+            except ValueError:
+                break
+            idx += 4
             features = []
-            idx = 0
             while True:
                 try:
-                    key, feature_idx, length = feature_data[idx:idx+3]
-                except ValueError:
+                    key = data[idx]
+                    try:
+                        int(key)
+                        break
+                    except Exception as e:
+                        pass
+                    length = int(data[idx+1])
+                except IndexError:
                     break
-                feature_idx, length = int(feature_idx), int(length)
+                idx += 2
                 if length:
                     if length == 1 and key == "binary_feature":
-                        value = feature_data[idx+3]
+                        value = data[idx]
                     else:
-                        value = np.array(feature_data[idx+3:idx+3+length], dtype=self.convert_map[key])
-                    features.append((key, value))
-                idx += length + 3
+                        value = np.array(data[idx:idx+length], dtype=self.convert_map[key])
+                    features.append(value)
+                    idx += length
             yield int(src), int(dst), int(typ), float(weight), features
 
 
@@ -254,7 +290,7 @@ def _dump_features(features: dict) -> str:
             else:
                 v = " ".join(map(str, value))
                 length = len(value)
-            output.append(f"{key} {idx} {length} {v}")
+            output.append(f"{key} {length} {v}")
     
     return " ".join(output)
 
@@ -268,7 +304,7 @@ def json_to_linear(filename_in, filename_out):
         node = json.loads(line)
 
         file_out.write(
-            f'-1 {node["node_id"]} {node["node_type"]} {node["node_weight"]} {_dump_features(node)}\n'
+            f'-1 {node["node_id"]} {node["node_type"]} {node["node_weight"]} {_dump_features(node)}'
         )
 
         edge_list = sorted(
@@ -276,8 +312,9 @@ def json_to_linear(filename_in, filename_out):
         )
         for edge in edge_list:
             file_out.write(
-                f'{edge["src_id"]} {edge["dst_id"]} {edge["edge_type"]} {edge["weight"]} {_dump_features(edge)}\n'
+                f' {edge["src_id"]} {edge["dst_id"]} {edge["edge_type"]} {edge["weight"]} {_dump_features(edge)}'
             )
+        file_out.write('\n')
 
     file_in.close()
     file_out.close()

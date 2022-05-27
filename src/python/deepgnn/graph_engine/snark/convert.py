@@ -241,20 +241,22 @@ class MultiWorkersConverter:
 
         lines = []
         not_first = False
-        for _, data in enumerate(dataset):
+        for data in dataset:
             for line in data:
-                if self.decoder_class == LinearDecoder:
-                    if line[0] == "-":  # if line is node
-                        if not_first:
-                            output(lines)#d.dispatch(lines)
-                        lines = []
-                        not_first = True
-                    lines.append(line)
-                else:
-                    output(line)#d.dispatch(line)
+                d.dispatch(line)
+                #if self.decoder_class == LinearDecoder:
+                #    if line[0] == "-":  # if line is node
+                #        if not_first:
+                #            d.dispatch(lines)
+                #        lines = []
+                #        not_first = True
+                #    lines.append(line)
+                #else:
+                #    d.dispatch(line)
 
-        if self.decoder_class == LinearDecoder and len(lines):
-            output(lines)#d.dispatch(lines)
+        #if self.decoder_class == LinearDecoder and len(lines):
+        #    d.dispatch(lines)
+
 
         if True:
             return
