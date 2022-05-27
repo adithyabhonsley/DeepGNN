@@ -8,6 +8,9 @@ import threading
 import platform
 import typing
 from abc import ABC, abstractmethod
+import ray.train as train
+from ray.train import Trainer
+import ray
 
 if platform.system() == "Windows":
     from multiprocessing.connection import PipeConnection as Connection  # type: ignore
@@ -100,14 +103,35 @@ class PipeDispatcher(Dispatcher):
 
         self.parallel = parallel
         self.count = 0
-        self.q_in = [mp.Pipe(False) for _ in range(parallel)]
-        self.q_out: mp.Queue = mp.Queue(parallel)
+        self.q_in = [ray.util.queue.Queue(1) for _ in range(parallel)]  # TODO needs to be pipe
+        self.q_out = ray.util.queue.Queue(parallel)
+
+        #trainer = Trainer(backend="torch", num_workers=4)
+        #trainer.start()
+        # TODO dont stall
+        #results = trainer.run(process())
+        #trainer.shutdown()
+        for i in range(parallel):
+            process.remote(
+                self.q_in[i],#[0],
+                self.q_out,
+                folder,
+                i + partition_offset,
+                int(self.jsm["node_type_num"]),
+                int(self.jsm["edge_type_num"]),
+                decoder_type,
+                skip_node_sampler,
+                skip_edge_sampler,
+            )
+
+
+        """
         processes = [
             parallel_func(
                 target=process,
                 args=(
                     self.q_in[i][0],
-                    self.q_out,
+                    self.q_out,`
                     folder,
                     i + partition_offset,
                     int(self.jsm["node_type_num"]),
@@ -121,6 +145,7 @@ class PipeDispatcher(Dispatcher):
         ]
         for p in processes:
             p.start()
+        """
 
         self.node_count = 0
         self.edge_count = 0
@@ -132,7 +157,7 @@ class PipeDispatcher(Dispatcher):
         Args:
             line (str): graph element.
         """
-        self.q_in[self.count % self.parallel][1].send(line)
+        self.q_in[self.count % self.parallel].put(line)#[1].send(line)
         self.count += 1
 
         if self.count % PROCESS_PRINT_INTERVAL == 0:
@@ -141,7 +166,7 @@ class PipeDispatcher(Dispatcher):
     def join(self):
         """Wait for all processes to finish work."""
         for i in range(self.parallel):
-            self.q_in[i][1].send(FLAG_ALL_DONE)
+            self.q_in[i].put(FLAG_ALL_DONE)#[1].send(FLAG_ALL_DONE)
 
         for _ in range(self.parallel):
             flag, output = self.q_out.get()
@@ -150,7 +175,7 @@ class PipeDispatcher(Dispatcher):
             self.partitions.append(output["partition"])
 
             assert flag == FLAG_WORKER_FINISHED_PROCESSING
-        self.q_out.close()
+        self.q_out.shutdown()
 
     def prop(self, name: str) -> typing.Any:
         """Properties relevant for conversion.

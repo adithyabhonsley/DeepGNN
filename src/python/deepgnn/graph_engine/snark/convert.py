@@ -16,6 +16,8 @@ else:
     from multiprocessing.connection import Connection  # type: ignore
 
 import fsspec
+import ray.train as train
+import ray
 
 from deepgnn import get_logger
 from deepgnn.graph_engine._adl_reader import TextFileIterator
@@ -45,7 +47,7 @@ class _NoOpWriter:
     def close(self):
         return
 
-
+@ray.remote
 def output(
     q_in: typing.Union[mp.Queue, Connection],
     q_out: mp.Queue,
