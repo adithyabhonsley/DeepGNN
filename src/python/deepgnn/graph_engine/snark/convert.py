@@ -48,17 +48,7 @@ class _NoOpWriter:
         return
 
 @ray.remote
-def output(
-    q_in: typing.Union[mp.Queue, Connection],
-    q_out: mp.Queue,
-    folder: str,
-    suffix: int,
-    node_type_num: int,
-    edge_type_num: int,
-    decoder_class: DecoderType,
-    skip_node_sampler: bool,
-    skip_edge_sampler: bool,
-) -> None:
+class Output:
     """Process graph nodes from a queue to binary files.
 
     Args:
@@ -72,75 +62,96 @@ def output(
         skip_node_sampler(bool): skip generation of node alias tables
         skip_edge_sampler(bool): skip generation of edge alias tables
     """
-    assert decoder_class is not None
-    decoder = decoder_class()
+    def __init__(
+        self,
+        q_in: typing.Union[mp.Queue, Connection],
+        q_out: mp.Queue,
+        folder: str,
+        suffix: int,
+        node_type_num: int,
+        edge_type_num: int,
+        decoder_class: DecoderType,
+        skip_node_sampler: bool,
+        skip_edge_sampler: bool,
+    ):
+        self.folder = folder
+        self.suffix = suffix
+        self.node_type_num = node_type_num
+        self.edge_type_num = self.node_type_num
+        self.decoder_class = decoder_class
+        self.skip_node_sampler = skip_node_sampler
+        self.skip_edge_sampler = skip_edge_sampler
+        assert decoder_class is not None
+        self.decoder = decoder_class()
 
-    node_count = 0
-    edge_count = 0
-    node_weight = [0] * node_type_num
-    node_type_count = [0] * node_type_num
-    edge_weight = [0] * edge_type_num
-    edge_type_count = [0] * edge_type_num
-    node_writer = converter.NodeWriter(str(folder), suffix)
-    edge_writer = converter.EdgeWriter(str(folder), suffix)
-    node_alias: typing.Union[converter.NodeAliasWriter, _NoOpWriter] = (
-        _NoOpWriter()
-        if skip_node_sampler
-        else converter.NodeAliasWriter(str(folder), suffix, node_type_num)
-    )
-    edge_alias: typing.Union[converter.EdgeAliasWriter, _NoOpWriter] = (
-        _NoOpWriter()
-        if skip_edge_sampler
-        else converter.EdgeAliasWriter(str(folder), suffix, edge_type_num)
-    )
-    count = 0
-    while True:
-        count += 1
-        if type(q_in) == Connection:
-            lines = q_in.recv()  # type: ignore
-        else:
-            lines = q_in.get()  # type: ignore
+        self.node_count = 0
+        self.edge_count = 0
+        self.node_weight = [0] * node_type_num
+        self.node_type_count = [0] * node_type_num
+        self.edge_weight = [0] * edge_type_num
+        self.edge_type_count = [0] * edge_type_num
+        self.node_writer = converter.NodeWriter(str(folder), suffix)
+        self.edge_writer = converter.EdgeWriter(str(folder), suffix)
+        self.node_alias: typing.Union[converter.NodeAliasWriter, _NoOpWriter] = (
+            _NoOpWriter()
+            if skip_node_sampler
+            else converter.NodeAliasWriter(str(folder), suffix, node_type_num)
+        )
+        self.edge_alias: typing.Union[converter.EdgeAliasWriter, _NoOpWriter] = (
+            _NoOpWriter()
+            if skip_edge_sampler
+            else converter.EdgeAliasWriter(str(folder), suffix, edge_type_num)
+        )
+        self.count = 0
+
+    def close(self):
+        self.node_writer.close()
+        self.edge_writer.close()
+        self.node_alias.close()
+        self.edge_alias.close()
+        return (
+            (
+                FLAG_WORKER_FINISHED_PROCESSING,
+                {
+                    "node_count": self.node_count,
+                    "edge_count": self.edge_count,
+                    "partition": {
+                        "id": self.suffix,
+                        "node_weight": self.node_weight,
+                        "node_type_count": self.node_type_count,
+                        "edge_weight": self.edge_weight,
+                        "edge_type_count": self.edge_type_count,
+                    },
+                },
+            )
+        )
+
+    def output(self, lines) -> None:
+        self.count += 1
+        #if type(self.q_in) == Connection:
+        #    lines = q_in.recv()  # type: ignore
+        #else:
+        #    lines = q_in.get()  # type: ignore
 
         if lines == FLAG_ALL_DONE:
-            break
+            return
 
-        for src, dst, typ, weight, features in decoder.decode(lines):
+        for src, dst, typ, weight, features in self.decoder.decode(lines):
             if src == -1:
-                node_writer.add(dst, typ, features)
-                edge_writer.nbi.write(  # type: ignore
-                    ctypes.c_uint64(edge_writer.ei.tell() // (4 + 8 + 8 + 4))
+                self.node_writer.add(dst, typ, features)
+                self.edge_writer.nbi.write(  # type: ignore
+                    ctypes.c_uint64(self.edge_writer.ei.tell() // (4 + 8 + 8 + 4))
                 )  # 4 bytes type, 8 bytes destination, 8 bytes offset, 4 bytes weight
-                node_alias.add(dst, typ, weight)
-                node_weight[typ] += float(typ)
-                node_type_count[typ] += 1
-                node_count += 1
+                self.node_alias.add(dst, typ, weight)
+                self.node_weight[typ] += float(typ)
+                self.node_type_count[typ] += 1
+                self.node_count += 1
             else:
-                edge_writer.add(dst, typ, weight, features)
-                edge_alias.add(src, dst, typ, weight)
-                edge_weight[typ] += weight
-                edge_type_count[typ] += 1
-                edge_count += 1
-
-    node_writer.close()
-    edge_writer.close()
-    node_alias.close()
-    edge_alias.close()
-    q_out.put(
-        (
-            FLAG_WORKER_FINISHED_PROCESSING,
-            {
-                "node_count": node_count,
-                "edge_count": edge_count,
-                "partition": {
-                    "id": suffix,
-                    "node_weight": node_weight,
-                    "node_type_count": node_type_count,
-                    "edge_weight": edge_weight,
-                    "edge_type_count": edge_type_count,
-                },
-            },
-        )
-    )
+                self.edge_writer.add(dst, typ, weight, features)
+                self.edge_alias.add(src, dst, typ, weight)
+                self.edge_weight[typ] += weight
+                self.edge_type_count[typ] += 1
+                self.edge_count += 1
 
 
 class MultiWorkersConverter:
@@ -210,7 +221,7 @@ class MultiWorkersConverter:
                 self.output_dir,
                 self.partition_count,
                 meta_path_local,
-                output,
+                Output,
                 decoder_class,
                 self.partition_offset,
                 False
