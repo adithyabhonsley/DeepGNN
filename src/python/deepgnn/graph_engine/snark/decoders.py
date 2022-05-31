@@ -241,39 +241,41 @@ class LinearDecoder(Decoder):
         """Initialize the Decoder."""
         super().__init__()
 
-    def decode(self, line: str):
+    def decode(self, lines: str):
         """Use json package to convert the json text line into node object."""
-        #for line in lines:
-        data = line.split()
+        if isinstance(lines, str):
+            lines = [lines]
+        for line in lines:
+            data = line.split()
 
-        idx = 0
-        while True:
-            try:
-                src, dst, typ, weight = data[idx:idx+4]
-            except ValueError:
-                break
-            idx += 4
-            features = []
+            idx = 0
             while True:
                 try:
-                    key = data[idx]
-                    try:
-                        int(key)
-                        break
-                    except Exception as e:
-                        pass
-                    length = int(data[idx+1])
-                except IndexError:
+                    src, dst, typ, weight = data[idx:idx+4]
+                except ValueError:
                     break
-                idx += 2
-                if length:
-                    if length == 1 and key == "binary_feature":
-                        value = data[idx]
-                    else:
-                        value = np.array(data[idx:idx+length], dtype=self.convert_map[key])
-                    features.append(value)
-                    idx += length
-            yield int(src), int(dst), int(typ), float(weight), features
+                idx += 4
+                features = []
+                while True:
+                    try:
+                        key = data[idx]
+                        try:
+                            int(key)
+                            break
+                        except Exception as e:
+                            pass
+                        length = int(data[idx+1])
+                    except IndexError:
+                        break
+                    idx += 2
+                    if length:
+                        if length == 1 and key == "binary_feature":
+                            value = data[idx]
+                        else:
+                            value = np.array(data[idx:idx+length], dtype=self.convert_map[key])
+                        features.append(value)
+                        idx += length
+                yield int(src), int(dst), int(typ), float(weight), features
 
 
 def _dump_features(features: dict) -> str:

@@ -257,8 +257,10 @@ class MultiWorkersConverter:
         lines = []
         not_first = False
         for data in dataset:
-            for line in data:
-                d.dispatch(line)
+            data_len = len(data)
+            split_len = data_len // self.thread_count + 1
+            for i in range(0, data_len, split_len):
+                d.dispatch(data[i:i+split_len])
                 #if self.decoder_class == LinearDecoder:
                 #    if line[0] == "-":  # if line is node
                 #        if not_first:
